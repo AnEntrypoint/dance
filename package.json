@@ -1,0 +1,44 @@
+{
+  "name": "@anentrypoint/dance",
+  "version": "0.1.0",
+  "description": "Drop a dancing MMD/VRM character into any three.js scene — model + VMD motion playback, physics, and audio-BPM-synced dancing. Supports multiple independent characters per scene.",
+  "type": "module",
+  "main": "src/index.js",
+  "module": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AnEntrypoint/dance.git"
+  },
+  "homepage": "https://github.com/AnEntrypoint/dance#readme",
+  "bugs": {
+    "url": "https://github.com/AnEntrypoint/dance/issues"
+  },
+  "license": "MIT",
+  "keywords": [
+    "three.js",
+    "mmd",
+    "vrm",
+    "pmx",
+    "vmd",
+    "dance",
+    "animation",
+    "physics"
+  ],
+  "peerDependencies": {
+    "three": ">=0.150.0"
+  },
+  "dependencies": {
+    "ammo.js": "^0.0.10",
+    "jszip": "^3.10.1"
+  },
+  "devDependencies": {
+    "three": "^0.171.0"
+  }
+}

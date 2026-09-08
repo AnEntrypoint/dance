@@ -75,7 +75,10 @@ if (MMD_SA_options.use_THREEX) {
   const cs = c.style
   cs.position = "absolute"
   cs.left = cs.top = "0px"
-  cs.zIndex = 1
+// paints above the legacy "SL" canvas (same Host, added after) when threeX is enabled;
+// pointer-events stays off so SL underneath keeps receiving mouse/drag input as before.
+  cs.zIndex = 2
+  cs.pointerEvents = "none"
   SL_Host.appendChild(c)
 }
 
@@ -8933,6 +8936,25 @@ var bones_by_name = mesh_MMD.bones_by_name
 mesh.position.copy(mesh_MMD.position);
 mesh.quaternion.copy(mesh_MMD.quaternion);
 
+// Mirror the legacy (jThree r58) dummy model's per-frame VMD-driven bone poses onto this
+// THREEX-loaded model's matching bones, by MMD bone name. The dummy model (invisible,
+// jThree/model/DUMMY.zip) still runs the legacy engine's motion selection, VMD parsing,
+// IK solving and BPM-sync timing every frame; reusing its already-correct output here is
+// far simpler and more reliable than re-implementing that pipeline for THREEX.
+if (this.bones_by_name) {
+  for (var bone_name in bones_by_name) {
+    var target_bone = this.bones_by_name[bone_name]
+    if (!target_bone) continue
+    var source_bone = bones_by_name[bone_name]
+    target_bone.quaternion.copy(source_bone.quaternion)
+    // Note: bone .position is intentionally NOT copied here. The two skeletons represent
+    // bone-local position differently (hierarchical/parent-relative here vs. how the
+    // legacy r58 pipeline stores it), so copying it 1:1 compounds down the bone chain and
+    // stretches the mesh. Quaternion (rotation) is hierarchy-representation-independent
+    // and reproduces the pose correctly on its own for rotation-driven MMD motions.
+  }
+}
+
 data.MMDAnimationHelper && data.MMDAnimationHelper.update(data.MMDAnimationHelper_clock.getDelta());
         }
       }
@@ -8966,7 +8988,33 @@ await new Promise((resolve) => {
   }, 'blob', true);
 });
 
-const loader = new THREE.MMDLoader();
+// three.js's MMDLoader has no notion of this app's "model.zip#/inner/path" zip-embedding
+// convention, so once the model itself is loaded (above) it can't resolve sibling texture
+// files the same way. Pre-extract every file in the zip to a blob: URL and hand MMDLoader
+// a LoadingManager that redirects texture requests (matched by filename) to them.
+var mmd_loader_manager;
+if (/\.zip\#/i.test(url_raw)) {
+  try {
+    const zip_url = url_raw.replace(/#.*$/, '');
+    const zip_buffer = await fetch(zip_url).then(r => r.arrayBuffer());
+    const zip = await JSZip.loadAsync(zip_buffer);
+    const tex_map = {};
+    for (const name in zip.files) {
+      if (zip.files[name].dir) continue;
+      tex_map[name] = URL.createObjectURL(await zip.files[name].async('blob'));
+    }
+    mmd_loader_manager = new THREE.LoadingManager();
+    mmd_loader_manager.setURLModifier((request_url) => {
+      const basename = decodeURIComponent(request_url).replace(/^.*[\/\\]/, '');
+      return tex_map[basename] || request_url;
+    });
+  }
+  catch (err) {
+    console.error('PMX texture pre-extraction failed', err);
+  }
+}
+
+const loader = new THREE.MMDLoader(mmd_loader_manager);
 
 loader.loadWithAnimation(
 
@@ -11909,7 +11957,7 @@ Object.assign(self.THREE, THREE_module);
 const Geometry_module = await import(System.Gadget.path + '/three.js/Geometry.js');
 Object.assign(self.THREE, Geometry_module);
 
-self.THREE.XLoader = _THREE.XLoader;
+if (_THREE) self.THREE.XLoader = _THREE.XLoader;
 
 if (MMD_SA_options.THREEX_options.use_OutlineEffect) {
 // Jun 10, 2023
@@ -17437,6 +17485,14 @@ MMD_SA_options.texture_resolution_limit=2048
     MMD_SA_options.model_path = MMD_SA_options.model_path_default
 // END
 
+// route the classic PMX dance model through THREEX (modern three.js MMDLoader) instead
+// of leaving THREEX_options.model_path unset, which disabled THREEX entirely.
+  if (!MMD_SA_options.THREEX_options.model_path && /\.pmx$/i.test(MMD_SA_options.model_path)) {
+    MMD_SA_options.THREEX_options.model_path = MMD_SA_options.model_path
+    MMD_SA_options.THREEX_options.use_MMD = true
+    MMD_SA_options.THREEX_options.enabled_by_default = true
+  }
+
   if (!MMD_SA_options.model_para)
     MMD_SA_options.model_para = {}
 
@@ -18734,102 +18790,31 @@ var js_prefix = "v2.1.2_"
 //js_prefix = ""; MMD_SA.use_jThree_v1 = true;
 
 if (MMD_SA.use_jThree) {
-//MMD_SA_options.ammo_version="2.82"
   js = [
   "jThree/script/jquery.min.js"
-/*//  "jThree/script/jquery-2.1.1.min.js"*/
   ];
 
   if (MMD_SA_options.MMD_disabled) {}
-  else if (1) {
+  else {
     js.push(
-//  "jThree/MMDplugin/ammo" + ((MMD_SA_options.ammo_version) ? "_v" + MMD_SA_options.ammo_version : "") + ".js",
   "jThree/MMDplugin/ammo_proxy.js"
     );
   }
-/*
-  else {
-//MMD_SA_options.ammo_version=30
-//https://github.com/kripken/ammo.js/issues/36
-self.Module = { TOTAL_MEMORY:52428800*2 };
-    js.push("jThree/MMDplugin/ammo" + ((MMD_SA_options.ammo_version) ? "_v" + MMD_SA_options.ammo_version : "") + ".js");
-    if (MMD_SA_options.ammo_version) {
-      js.push('Ammo().then(function () { MMD_SA._ammo_async_loaded_=true; console.log("Ammo.js async loaded"); if (self.jThree && jThree._ammo_async_init_) { console.log(jThree._ammo_async_init_.length); jThree._ammo_async_init_.forEach(function (func) { func() }); jThree._ammo_async_init_=[]; } else { console.log(0); }; });')
-//      js.push('MMD_SA._ammo_async_loaded_=true; console.log("Ammo.js loaded");')
-    }
-  }
-*/
-  const js_min_mode = self._js_min_mode_ || (browser_native_mode && !webkit_window && !localhost_mode) || (webkit_electron_mode && !/AT_SystemAnimator_v0001\.gadget/.test(System.Gadget.path));
 
-  if (js_min_mode) {
-console.log("three.core.min.js")
-    js.push(
+// jThree/three.core.min.js provides both the legacy r58 THREE global (superseded for
+// rendering by MMD_SA.THREEX's modern three.js pipeline once threeX.enabled) AND core
+// MMD_SA.* orchestration code (MMD_SA.fn, MMD_SA.jThree_ready, OneEuroFilter, etc.)
+// that live code still calls regardless of rendering pipeline, so it stays loaded
+// either way.
+  js.push(
   "jThree/three.core.min.js"
-    );
-  }
-  else {
-    js.push(
-  "_private/js/XMLHttpRequestZIP.js"
- ,"js/jszip.js"
-
- ,"jThree/script/"+js_prefix+"jThree.js"
- ,"jThree/MMDplugin/"+js_prefix+"jThree.MMD.js"
-
- ,"jThree/plugin/CameraHelper.js"
- ,"jThree/plugin/jThree.XFile.js"
- ,"jThree/plugin/MODShadowMapPlugin.js"
- ,"jThree/plugin/three_mirror2.js"
- ,"jThree/plugin/"+js_prefix+"jThree.Trackball.js"
- ,"jThree/plugin/three.audio.js"
-
-// ,"jThree/plugin/three.proton.js"
-
- ,"jThree/index.js"
-
-// ,"jThree/three.ShaderParticles.js"
-// ,"jThree/three.SPE.js"
-
-  ,"js/one_euro_filter.js"
-    );
-  }
+  );
 
   var EC = MMD_SA_options.MME && MMD_SA_options.MME.PostProcessingEffects
   if (EC && EC.effects.length) {
-    if (js_min_mode) {
-console.log("three.core.min.effect.js")
-      js.push(
+    js.push(
   "jThree/three.core.effect.min.js"
-      );
-    }
-    else {
-      js.push(
-  "jThree/plugin/three_CopyShader.js"
- ,"jThree/plugin/three_EffectComposer.js"
- ,"jThree/plugin/three_MaskPass.js"
- ,"jThree/plugin/three_RenderPass.js"
- ,"jThree/plugin/three_ShaderPass.js"
- ,"jThree/plugin/three_TexturePass.js"
-// ,"jThree/plugin/three_ConvolutionShader.js"
-// ,"jThree/plugin/three_BloomPass.js"
-      );
-    }
-
-//threeoctree.min.js
-//console.log("threeoctree.min.js")
-//js.push("jThree/plugin/Octree.js")
-
-    if (EC.use_FXAA)
-      js.push("jThree/plugin/three_FXAAShader.js")
-
-    var _effect_loaded = { CopyShader:true }
-    EC.effects.forEach(function (effect) {
-      if (EC.use_solid_bg)
-        effect.use_solid_bg = true
-      if (!_effect_loaded[effect.name]) {
-js.push("jThree/plugin/three_" + effect.name + ".js")
-       }
-      _effect_loaded[effect.name] = true
-    });
+    );
   }
 
   if (MMD_SA_options.shadow_darkness == null)
@@ -18881,6 +18866,8 @@ Array.prototype.shuffle = function () {
       './math/': './three.js/',
       './postprocessing/': './three.js/postprocessing/',
       './shaders/': './three.js/shaders/',
+      'postprocessing': './three.js/vendor/postprocessing.js',
+      'three/examples/jsm/': './three.js/',
     }
   };
 

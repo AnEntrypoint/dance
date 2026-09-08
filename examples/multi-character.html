@@ -1,0 +1,117 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>@anentrypoint/dance — multiple characters</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #10141c; }
+  canvas { display: block; }
+  #ui { position: absolute; top: 12px; left: 12px; font-family: sans-serif; color: #fff; }
+  #ui button, #ui input { font-size: 14px; }
+  #status { margin-top: 8px; font-size: 13px; opacity: 0.85; white-space: pre-line; }
+</style>
+
+<!-- jszip and ammo.js ship only as classic UMD builds (no real ES module entry point),
+     so they can't be targeted by the import map's bare specifiers below. Preloading them
+     here as globals is what src/physics.js and src/motion.js fall back to checking for. -->
+<script src="vendor/jszip.min.js"></script>
+<script src="vendor/ammo.js"></script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "../three.js/three.module.js"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="ui">
+  <button id="load-audio">Load MP3 (BPM-synced, data-driven)</button>
+  <div id="status">loading characters…</div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { DanceCharacter, enableDragDrop } from '../src/index.js';
+
+const statusEl = document.getElementById('status');
+const log = (msg) => { statusEl.textContent = msg; console.log(msg); };
+
+const scene = new THREE.Scene();
+scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+const dirLight = new THREE.DirectionalLight(0xffffff, 2.5);
+dirLight.position.set(2, 5, 3);
+scene.add(dirLight);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 200);
+camera.position.set(0, 12, 32);
+camera.lookAt(0, 10, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+const MODEL = '../TEMP/DEMO/models/Appearance%20Miku.zip#/Appearance Miku_BDEF_mod-v04.pmx';
+
+// Two fully independent characters in one scene, sharing one renderer/render-loop —
+// the concrete proof this library supports multiple simultaneous dancers.
+const dancer1 = new DanceCharacter(scene, {
+  modelUrl: MODEL,
+  motionUrl: '../MMD.js/motion/motion_basic_pack01.zip#/standmix2_modified.vmd',
+  syncToBPM: { baseBPM: 120 },
+});
+dancer1.ready.then((d) => { d.mesh.position.x = -8; });
+
+const dancer2 = new DanceCharacter(scene, {
+  modelUrl: MODEL,
+  motionUrl: '../MMD.js/motion/motion_demo_pack01.zip#/demo/mozuya/monstar.vmd',
+  syncToBPM: { baseBPM: 128 },
+});
+dancer2.ready.then((d) => { d.mesh.position.x = 8; });
+
+Promise.all([dancer1.ready, dancer2.ready]).then(() => {
+  log('both characters loaded — dancing independently, each with its own motion + physics.');
+});
+
+// Data-driven audio: click the button, pick a file, both characters run BPM detection
+// and sync their own playback speed — no drag-drop required.
+document.getElementById('load-audio').addEventListener('click', () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'audio/*';
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    log('detecting BPM…');
+    const [r1, r2] = await Promise.all([dancer1.playAudio(file), dancer2.playAudio(file)]);
+    log(`BPM detected: ${r1.bpm}\ndancer1 rate: ${dancer1.playbackRate.toFixed(2)}x  dancer2 rate: ${dancer2.playbackRate.toFixed(2)}x`);
+  };
+  input.click();
+});
+
+// Optional convenience: drag a .vmd/.mp3 onto the page to redirect it to dancer1.
+enableDragDrop(document.body, dancer1, {
+  onMotion: () => log('dancer1: new motion loaded via drag-drop'),
+  onAudio: (file, { bpm }) => log(`dancer1: BPM ${bpm} via drag-drop`),
+  onError: (err) => log('error: ' + err.message),
+});
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const delta = clock.getDelta();
+  dancer1.update(delta);
+  dancer2.update(delta);
+  renderer.render(scene, camera);
+});
+</script>
+
+</body>
+</html>
